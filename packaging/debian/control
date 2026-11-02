@@ -1,0 +1,13 @@
+Source: kmm-binance-price
+Section: kde
+Priority: optional
+Maintainer: KMyMoney Binance Plugin contributors <noreply@example.invalid>
+Build-Depends: debhelper-compat (= 13), cmake, g++, qt6-base-dev, libkf6coreaddons-dev, libkf6config-dev, libkf6xmlgui-dev, libalkimia6-dev, libgmp-dev
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+
+Package: kmm-binance-price
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, kmymoney (= ${kmm:Version})
+Description: Binance securities price plugin for KMyMoney
+ Native Qt6/KF6 plugin with Binance spot and ECB fiat reference prices.

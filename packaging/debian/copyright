@@ -1,0 +1,7 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: kmm-binance-price
+
+Files: *
+Copyright: KMyMoney Binance Plugin contributors
+License: GPL-2+
+ See /usr/share/common-licenses/GPL-2.

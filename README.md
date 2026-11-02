@@ -18,7 +18,7 @@ ctest --test-dir build --output-on-failure
 
 Output: `build/kmm_binance_price.so`. Tests do not access the network or open real ledger files; ledger tests use only a temporary in-process engine, and GUI tests run offscreen. Coverage includes exact quote conversion, multiple securities/currencies, stablecoins not equaling USD, suspended/missing markets, invalid JSON/non-positive numbers, FX dates, HTTP 429/418 cooldowns, cancellation/timeouts/response limits, reopening the same UUID, native plugin instantiation and XMLGUI Tools menu merging, restoration of old prices after a mid-write failure, rejection of existing transactions, and save notifications after successful commits. `plugin_metadata` / `plugin_discovery` use a fake `AppInterface` and a real in-memory engine to verify `plug/unplug`, closing/reopening, no securities selected by default in the configuration dialog, and dialog closure on unloading; **this does not mean the real KMyMoney host UI or updates to real ledger files have been verified**. The fake host connects through the original v5.2.2 interface registry in `tests/upstream/interfaceloader.h`, for testing only, without changing the production plugin API.
 
-Arch's 5.2.2 development files do not provide a KMyMoney CMake package, so the build uses `find_path` / `find_library`. Its Alkimia pkg-config contains relative include paths, so the build locates Qt6 Alkimia directly; `compat/` supplies `kmmset.h`, `qhashseedtype.h`, and an unused export header omitted from Arch's package. The first two come from [KDE's 5.2 branch](https://invent.kde.org/office/kmymoney/-/tree/5.2/kmymoney/mymoney); no system headers are modified and no plugin ABI is fabricated. Installed KMyMoney headers with the same names take precedence.
+Arch's 5.2.2 development files do not provide a KMyMoney CMake package, so the build uses `find_path` / `find_library`. Alkimia's `LibAlkimia6` CMake target is preferred; direct Qt6 header/library lookup remains the fallback for Arch's broken relative pkg-config paths. `compat/` supplies `kmmset.h`, `qhashseedtype.h`, and an unused export header omitted from Arch's package. The first two come from [KDE's 5.2 branch](https://invent.kde.org/office/kmymoney/-/tree/5.2/kmymoney/mymoney); no system headers are modified and no plugin ABI is fabricated. Installed KMyMoney headers with the same names take precedence.
 
 ### Online smoke test without accessing ledger files
 
@@ -27,6 +27,39 @@ Arch's 5.2.2 development files do not provide a KMyMoney CMake package, so the b
 ```
 
 Uses the same asynchronous client as the plugin and prints exact rational numbers, readable decimals, and spot paths/FX dates; it does not read or write ledger files. Requests have a 90-second overall deadline. Regional restrictions, loss of connectivity, TLS problems, or service rate limits cause a nonzero exit, with no fallback to alternative markets or old quotes.
+
+## Native packages and GitHub Actions
+
+`.github/workflows/packages.yml` builds from this repository's source **inside each target distribution**, not by renaming archives or repackaging another distribution's binaries:
+
+| Target | Download architecture → native package architecture | Format |
+| --- | --- | --- |
+| Arch Linux rolling | amd64 → x86_64 | `.pkg.tar.zst` |
+| Debian sid | amd64 → amd64; aarch64 → arm64; riscv64 → riscv64 | `.deb` |
+| openSUSE Tumbleweed | amd64 → x86_64; aarch64 → aarch64; riscv64 → riscv64 | `.rpm` |
+
+These targets were selected for Qt6/KF6/KMyMoney development dependency availability. **RPM means openSUSE Tumbleweed, not generic Fedora/RHEL support; DEB means sid, not Debian stable/Ubuntu support.** Rolling images/repositories are not pinned snapshots. New incompatible dependencies deliberately fail the build; KMyMoney versions other than 5.2.2 require a compatibility review first.
+
+- PRs and pushes to `main`: Python packaging checks plus all three native amd64 package builds; no release. Tag pushes matching `v*`: all **seven** builds, then one release only after every build passes. `workflow_dispatch`: all seven artifacts only, even if run against a tag. aarch64 uses native GitHub ARM runners; riscv64 compiles under QEMU (not cross-compilation), with a six-hour per-job limit.
+- Release tags must be exactly `vX.Y.Z`, matching CMake `project(VERSION)`, `src/plugin.json`, and the Arch recipe (currently `v0.1.0`). Change the source versions together before tagging; the pipeline never rewrites versions to match a tag. Lightweight/annotated tag identity is checked against the workflow commit immediately before creating the draft and again immediately before publishing; movement/deletion during uploads aborts publication and retains the draft. A race remains after the final check because GitHub cannot atomically check the tag and publish: repository rulesets must prohibit release-tag updates and deletions. This workflow does not configure those rulesets.
+- Native recipes are under `packaging/`. Arch uses non-root `makepkg`; Debian uses debhelper/`dpkg-shlibdeps`; RPM uses `rpmbuild` and automatic ELF requirements. All packages require the **exact installed KMyMoney package version/release**, because its plugin ABI is not stable. Rebuild after KMyMoney, Qt or KF ABI updates; an exact KMyMoney dependency alone cannot protect against all Qt/KF ABI changes.
+- Debian has **no `kmymoney-dev` package**. CI downloads the source version matching `${source:Version}` of the installed runtime (including binNMU handling), installs its build dependencies, and configures it with Qt6/Debian options. A private SDK copies only headers enumerated by upstream's configured public-header install rules and links to the installed versioned runtime libraries. The unused, build-generated `kmymoneysettings.h` is omitted, not fabricated. Neither the SDK nor replacement KMyMoney libraries are shipped.
+- Builds query Qt6's actual `QT_INSTALL_PLUGINS`; offline CTest, ELF machine, native package architecture, exact dependencies, payload layout, installed dynamic linkage, and Qt metadata/`kmymoney_plugins` discovery must pass. Packages are installed **only inside disposable CI containers**. No online quote smoke tests or real ledger files are used. Fake-host tests do not verify the real KMyMoney UI.
+- Only the release job has `contents: write`. Actions are pinned to verified commit SHAs; checkout credentials are not persisted. The release job accepts the exact seven expected filenames from this run, adds `SHA256SUMS`, uploads a draft, checks all eight assets, then publishes. Existing releases/assets are never overwritten; upload failures leave a draft for manual inspection/removal before retry. No partial public release is intentionally published.
+
+Artifacts are named `kmm-binance-price_0.1.0-1_<distribution>_<architecture>.<format>` and retained for 14 days on Actions runs; successful tag releases retain all seven packages and checksums. Packages and checksums are **unsigned**: SHA-256 detects corruption, not publisher authenticity; there is no package/repository signing key or automatic update repository. Verify the release source and trust boundary before installation:
+
+```sh
+sha256sum --ignore-missing -c SHA256SUMS
+# Choose only the package for your target distribution and architecture:
+sudo pacman -U ./kmm-binance-price_0.1.0-1_archlinux_amd64.pkg.tar.zst
+sudo apt install ./kmm-binance-price_0.1.0-1_debian-sid_amd64.deb
+sudo zypper install --allow-unsigned-rpm ./kmm-binance-price_0.1.0-1_opensuse-tumbleweed_amd64.rpm
+```
+
+Use `aarch64`/`riscv64` filenames for those targets. Back up your ledger and enable the plugin as below. If the exact KMyMoney dependency is unavailable, rebuild against your current target repository; do **not** bypass dependency checks or install binaries for another distribution. The workflow definition itself does not demonstrate a successful hosted Actions run; inspect all seven jobs on the actual tag run before treating the release as verified.
+
+Local packaging logic checks (standard-library Python only): `python3 -m unittest discover -s packaging/tests -v`. The container entrypoint refuses to install dependencies without `CI_CONTAINER=1`; do not run it on your host.
 
 ## Installation (performed by the user; no automatic system installation)
 
@@ -47,7 +80,7 @@ cmake --install build --prefix "$HOME/.local"
 QT_PLUGIN_PATH="$HOME/.local/lib/qt6/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}" kmymoney
 ```
 
-`QT_PLUGIN_PATH` must point to the directory containing the `kmymoney_plugins/` subdirectory, not to the `.so` file. You can also use the absolute path of `stage/lib/qt6/plugins` as this variable to test the staged build. Do not mix Qt5 plugin directories into the Qt6 path. The `plugin_discovery` test actually stages an installation into a temporary `DESTDIR` using the current installation rules, then discovers the plugin with the same namespace as the host, so absolute-path loading cannot hide installation-directory errors; this test targets the default relative installation layout.
+`QT_PLUGIN_PATH` must point to the directory containing the `kmymoney_plugins/` subdirectory, not to the `.so` file. You can also use the absolute path of `stage/lib/qt6/plugins` as this variable to test the staged build. Do not mix Qt5 plugin directories into the Qt6 path. The `plugin_discovery` test actually stages an installation into a temporary `DESTDIR` using the current installation rules, then discovers the plugin with the same namespace as the host, so absolute-path loading cannot hide installation-directory errors; it supports both relative and absolute installation layouts.
 
 In KMyMoney, enable **Binance Securities Prices / 币安证券报价** under **Settings → Configure KMyMoney → Plugins** (**设置 → 配置 KMyMoney → 插件** in Chinese). The plugin is disabled by default; even after enabling it, no securities are selected by default. The Tools menu gains “配置币安证券报价…” (Configure Binance Securities Prices), “更新币安证券报价” (Update Binance Securities Prices), and “币安报价状态…” (Binance Quote Status). These plugin menu labels are currently in Chinese; the English explanations here are not localized UI labels. If the entries are missing, check the plugin path, ABI, and loading errors in the terminal.
 

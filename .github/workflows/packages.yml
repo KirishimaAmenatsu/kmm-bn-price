@@ -1,0 +1,89 @@
+name: Native packages
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never cancel a tag run halfway through publication. Branch/PR updates may
+# supersede older checks; tag runs serialize; manual runs are independent.
+concurrency:
+  group: packages-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'checks' }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s packaging/tests -v
+      - run: for script in packaging/build-project.sh packaging/ci/*.sh; do bash -n "$script"; done
+      - id: matrix
+        run: python3 packaging/ci/metadata.py prepare
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - if: matrix.arch == 'riscv64'
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+        with:
+          platforms: riscv64
+      - name: Compile, test, package and verify in target distribution
+        env:
+          TARGET_DISTRO: ${{ matrix.distro }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          TARGET_IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          platform=$TARGET_ARCH
+          if [[ $platform == aarch64 ]]; then platform=arm64; fi
+          mkdir -p "$RUNNER_TEMP/packages"
+          docker run --rm --platform "linux/$platform" \
+            -e CI_CONTAINER=1 -e BUILD_JOBS=2 \
+            -v "$PWD:/input:ro" -v "$RUNNER_TEMP/packages:/out" \
+            "$TARGET_IMAGE" bash /input/packaging/ci/container-build.sh "$TARGET_DISTRO" "$TARGET_ARCH"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-${{ matrix.distro }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/packages/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: release-assets
+      - name: Check seven assets, upload draft, then publish (never overwrite)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 packaging/ci/release.py

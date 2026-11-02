@@ -1,0 +1,17 @@
+#!/usr/bin/make -f
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export DEB_CXXFLAGS_MAINT_APPEND = -fPIC
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	bash packaging/build-project.sh configure . obj-ci
+override_dh_auto_build:
+	bash packaging/build-project.sh build . obj-ci
+override_dh_auto_test:
+	bash packaging/build-project.sh test . obj-ci
+override_dh_auto_install:
+	bash packaging/build-project.sh install . obj-ci $(CURDIR)/debian/kmm-binance-price
+override_dh_gencontrol:
+	dh_gencontrol -- -Vkmm:Version=$$(dpkg-query -W -f='$${Version}' kmymoney)

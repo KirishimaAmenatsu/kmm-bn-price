@@ -38,7 +38,8 @@ int main(int argc, char** argv)
         // DESTDIR also confines a user-configured absolute install destination;
         // a test must never install into the actual system or home prefix.
         if (!stage.isValid() || QProcess::execute(args[4], {"-E", "env", "DESTDIR=" + stage.path(), args[4], "--install", args[2], "--prefix", "/kmm-binance-test"}) != 0) return 1;
-        const auto root = stage.path() + "/kmm-binance-test/" + args[3] + "/qt6/plugins";
+        const auto installedDir = QDir::isAbsolutePath(args[3]) ? args[3] : "/kmm-binance-test/" + args[3];
+        const auto root = QFileInfo(stage.path() + installedDir).absolutePath();
         QCoreApplication::setLibraryPaths({root});
         // Same namespace and discovery API as KMyMoney v5.2.2 pluginloader.cpp.
         for (const auto& candidate : KPluginMetaData::findPlugins(QStringLiteral("kmymoney_plugins")))
@@ -47,6 +48,11 @@ int main(int argc, char** argv)
             QTextStream(stderr) << "Installed plugin was NOT discovered in host namespace kmymoney_plugins\n";
             return 1;
         }
+    } else if (args.size() == 3 && args[1] == "--discover-root") {
+        QCoreApplication::setLibraryPaths({args[2]});
+        for (const auto& candidate : KPluginMetaData::findPlugins(QStringLiteral("kmymoney_plugins")))
+            if (candidate.pluginId() == "kmm_binance_price") { path = candidate.fileName(); break; }
+        if (path.isEmpty() || QFileInfo(path).canonicalFilePath() != QFileInfo(args[2] + "/kmymoney_plugins/kmm_binance_price.so").canonicalFilePath()) return 1;
     } else if (args.size() == 2) path = args[1];
     else return 2;
     const KPluginMetaData metadata(path);

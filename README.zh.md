@@ -18,7 +18,7 @@ ctest --test-dir build --output-on-failure
 
 产物：`build/kmm_binance_price.so`。测试不访问网络、不打开真实账本；账本测试只使用进程内的临时引擎，GUI 测试使用 offscreen。测试覆盖精确报价换算、多证券/多法币、稳定币不等美元、停牌/缺失市场、错误 JSON/非正数、FX 日期、HTTP 429/418 冷却、取消/超时/响应上限、同 UUID 重开、原生插件实例化和 XMLGUI 工具菜单合并、故障中途写入后的旧价格恢复、拒绝已有事务及成功提交后的保存通知。`plugin_metadata` / `plugin_discovery` 用假 `AppInterface` 和真实内存引擎验证 `plug/unplug`、关闭/重开、配置对话框默认不选和卸载关闭对话框；**这不等于真实 KMyMoney 宿主 UI 或真实账本更新已经验证**。假宿主通过 `tests/upstream/interfaceloader.h` 中 v5.2.2 原接口注册表接入，仅供测试，不更改生产插件 API。
 
-Arch 的 5.2.2 开发文件未提供 KMyMoney CMake package，因此使用 `find_path` / `find_library`。其 Alkimia pkg-config 存在相对 include 路径，构建直接查找 Qt6 Alkimia；`compat/` 补齐 Arch 漏装的 `kmmset.h`、`qhashseedtype.h` 和一个未使用的 export 头。前两个来自 [KDE 的 5.2 分支](https://invent.kde.org/office/kmymoney/-/tree/5.2/kmymoney/mymoney)，不修改系统头、不伪造插件 ABI。已安装的同名 KMyMoney 头优先。
+Arch 的 5.2.2 开发文件未提供 KMyMoney CMake package，因此使用 `find_path` / `find_library`。Alkimia 优先使用 `LibAlkimia6` CMake target；直接查找 Qt6 头/库作为 Arch 相对 pkg-config 路径问题的后备。`compat/` 补齐 Arch 漏装的 `kmmset.h`、`qhashseedtype.h` 和一个未使用的 export 头。前两个来自 [KDE 的 5.2 分支](https://invent.kde.org/office/kmymoney/-/tree/5.2/kmymoney/mymoney)，不修改系统头、不伪造插件 ABI。已安装的同名 KMyMoney 头优先。
 
 ### 不接触账本的联网 smoke
 
@@ -27,6 +27,39 @@ Arch 的 5.2.2 开发文件未提供 KMyMoney CMake package，因此使用 `find
 ```
 
 调用与插件相同的异步客户端，输出精确有理数、便于阅读的小数以及现货路径/FX 日期；不读取或写入账本。请求有 90 秒总截止时间。受地区限制、断网、TLS 或服务限流影响时会非零退出，不使用替代市场或旧报价兜底。
+
+## 原生包与 GitHub Actions
+
+`.github/workflows/packages.yml` 在**每个目标发行版内部从本仓库源码编译**，不是改压缩包后缀或重新包装其他发行版的二进制：
+
+| 目标 | 下载架构 → 原生包架构 | 格式 |
+| --- | --- | --- |
+| Arch Linux 滚动版 | amd64 → x86_64 | `.pkg.tar.zst` |
+| Debian sid | amd64 → amd64；aarch64 → arm64；riscv64 → riscv64 | `.deb` |
+| openSUSE Tumbleweed | amd64 → x86_64；aarch64 → aarch64；riscv64 → riscv64 | `.rpm` |
+
+按 Qt6/KF6/KMyMoney 开发依赖可用性选择以上目标。**RPM 指 openSUSE Tumbleweed，不代表通用 Fedora/RHEL 支持；DEB 指 sid，不代表 Debian stable/Ubuntu 支持。** 滚动镜像/仓库没有固定快照。新依赖不兼容时构建会直接失败；KMyMoney 不再是 5.2.2 时，必须先审查兼容性。
+
+- PR 和 `main` 分支 push：Python 打包逻辑检查及三种原生 amd64 包，不发布。匹配 `v*` 的 tag push：**七包全部成功**后才发布同一个 Release。`workflow_dispatch`：始终只生成七个 Actions artifacts，即使手动选择 tag 也不发布。aarch64 用 GitHub 原生 ARM runner；riscv64 在 QEMU 中编译（不是交叉编译），单 job 最长六小时。
+- 发布 tag 必须严格为 `vX.Y.Z`，与 CMake `project(VERSION)`、`src/plugin.json`、Arch 配方一致（当前 `v0.1.0`）。先同步修改源码版本再打 tag；流水线不会修改源码来迎合 tag。创建 draft 前和公开发布前，均立即解析 lightweight/annotated tag 并核对 workflow commit；上传期间移动/删除 tag 会中止公开并保留 draft。GitHub 无法原子执行 tag 核对和发布，最后检查后仍有残余竞态，必须使用仓库 ruleset 禁止发布 tag 更新和删除；本 workflow 不会配置这些 ruleset。
+- 原生配方位于 `packaging/`。Arch 使用非 root `makepkg`；Debian 使用 debhelper/`dpkg-shlibdeps`；RPM 使用 `rpmbuild` 及自动 ELF 依赖。插件 ABI 不稳定，因此全部包依赖构建时**精确的 KMyMoney 包版本/release**。KMyMoney、Qt、KF ABI 更新后需重建；只锁 KMyMoney 版本无法防止所有 Qt/KF ABI 变化。
+- Debian **不存在 `kmymoney-dev`**。CI 根据已安装 runtime 的 `${source:Version}` 下载匹配源码（处理 binNMU），安装构建依赖并按 Qt6/Debian 选项配置。私有 SDK 只复制上游配置后 public-header 安装规则列出的头，并链接已安装的版本化 runtime 库。未用到、需构建生成的 `kmymoneysettings.h` 被排除，不会伪造；SDK 和替代 KMyMoney 库均不进入成品。
+- 查询实际 Qt6 `QT_INSTALL_PLUGINS`；必须通过离线 CTest、ELF Machine、原生包架构、精确依赖、文件布局、安装后动态链接及 Qt metadata/`kmymoney_plugins` namespace 发现验证。包**只在一次性 CI 容器中安装**，不执行联网报价 smoke，不接触真实账本。假宿主测试不等于真实 KMyMoney UI 验证。
+- 只有 release job 有 `contents: write`。Actions 固定到已核验 commit SHA，checkout 不保留凭据。release job 只接受本次运行精确预期的七个包名，生成 `SHA256SUMS`，先上传 draft，核对八个资产后才公开发布。绝不覆盖已有 Release/资产；上传失败保留 draft，人工检查/删除后再重试，不主动发布不完整 Release。
+
+文件名为 `kmm-binance-price_0.1.0-1_<发行版>_<架构>.<格式>`；Actions artifacts 保留 14 天，成功的 tag Release 保存七包及校验文件。包和校验文件均**未签名**：SHA-256 只能检查损坏，不能证明发布者身份；没有包/仓库签名密钥或自动更新仓库。安装前核对发布源码和信任边界：
+
+```sh
+sha256sum --ignore-missing -c SHA256SUMS
+# 只执行与你的发行版和架构匹配的一项：
+sudo pacman -U ./kmm-binance-price_0.1.0-1_archlinux_amd64.pkg.tar.zst
+sudo apt install ./kmm-binance-price_0.1.0-1_debian-sid_amd64.deb
+sudo zypper install --allow-unsigned-rpm ./kmm-binance-price_0.1.0-1_opensuse-tumbleweed_amd64.rpm
+```
+
+其他架构选择 `aarch64`/`riscv64` 文件。先备份账本，再按下文启用插件。精确 KMyMoney 依赖已不可用时，应针对当前目标仓库重新构建；**不要**绕过依赖检查或安装其他发行版的包。提供 workflow 定义不代表已成功运行 hosted Actions；应查看实际 tag 运行的全部七个 job 后再确认发布验证结果。
+
+本地打包逻辑检查（仅 Python 标准库）：`python3 -m unittest discover -s packaging/tests -v`。容器入口没有 `CI_CONTAINER=1` 会拒绝安装依赖；不要在宿主机执行。
 
 ## 安装（由用户执行，本项目不会自动系统安装）
 
@@ -47,7 +80,7 @@ cmake --install build --prefix "$HOME/.local"
 QT_PLUGIN_PATH="$HOME/.local/lib/qt6/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}" kmymoney
 ```
 
-注意 `QT_PLUGIN_PATH` 指向包含 `kmymoney_plugins/` 子目录的目录，不是 `.so` 文件。也可将 `stage/lib/qt6/plugins` 的绝对路径作为该变量来测试暂存产物。不要把 Qt5 插件目录混入 Qt6 路径。`plugin_discovery` 测试会用当前安装规则真正暂存安装到临时 `DESTDIR`，再用宿主相同的 namespace 发现插件，避免绝对路径加载掩盖安装目录错误；该测试面向默认相对安装布局。
+注意 `QT_PLUGIN_PATH` 指向包含 `kmymoney_plugins/` 子目录的目录，不是 `.so` 文件。也可将 `stage/lib/qt6/plugins` 的绝对路径作为该变量来测试暂存产物。不要把 Qt5 插件目录混入 Qt6 路径。`plugin_discovery` 测试会用当前安装规则真正暂存安装到临时 `DESTDIR`，再用宿主相同的 namespace 发现插件，避免绝对路径加载掩盖安装目录错误；同时支持相对与绝对安装布局。
 
 在 KMyMoney **设置 → 配置 KMyMoney → 插件** 中启用 **Binance Securities Prices / 币安证券报价**。插件默认不启用；启用后所有证券仍默认不选中。工具菜单会新增“配置币安证券报价…”、“更新币安证券报价”和“币安报价状态…”。若看不到，检查插件路径、ABI 和终端加载错误。
 

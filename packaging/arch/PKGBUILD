@@ -1,0 +1,28 @@
+pkgname=kmm-binance-price
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Binance securities price plugin for KMyMoney (Qt6)'
+arch=('x86_64')
+url='https://github.com/KirishimaAmenatsu/kmm-bn-price'
+license=('GPL-2.0-or-later')
+depends=('kmymoney' 'qt6-base' 'kcoreaddons' 'kconfig' 'kxmlgui' 'libalkimia' 'gmp')
+makedepends=('cmake' 'gcc' 'make')
+options=('!debug')
+source=("source.tar.gz")
+sha256sums=('SKIP') # Local CI archive, never downloaded.
+
+prepare() {
+  depends[0]="kmymoney=$(pacman -Q kmymoney | cut -d ' ' -f2)"
+}
+build() {
+  bash "$srcdir/source/packaging/build-project.sh" configure "$srcdir/source" "$srcdir/build"
+  bash "$srcdir/source/packaging/build-project.sh" build "$srcdir/source" "$srcdir/build"
+}
+check() {
+  bash "$srcdir/source/packaging/build-project.sh" test "$srcdir/source" "$srcdir/build"
+}
+package() {
+  depends[0]="kmymoney=$(pacman -Q kmymoney | cut -d ' ' -f2)"
+  bash "$srcdir/source/packaging/build-project.sh" install "$srcdir/source" "$srcdir/build" "$pkgdir"
+  install -Dm644 "$srcdir/source/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
