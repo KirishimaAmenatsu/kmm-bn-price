@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -13,6 +14,8 @@ from metadata import validate_assets, validate_tag, version
 
 
 MAX_TAG_DEREFERENCES = 8
+PUBLISH_MAX_ATTEMPTS = 5
+PUBLISH_RETRY_SECONDS = 3
 
 
 def resolve_tag_commit(request, base, tag):
@@ -90,7 +93,20 @@ def publish(directory):
     # must prohibit updates/deletions to close the remaining race after this GET.
     if resolve_tag_commit(request, base, tag) != sha:
         raise ValueError("tag no longer points to this workflow commit; leaving release as draft")
-    request(base + f"/releases/{release['id']}", "PATCH", {"draft": False})
+    for attempt in range(1, PUBLISH_MAX_ATTEMPTS + 1):
+        try:
+            request(base + f"/releases/{release['id']}", "PATCH", {"draft": False})
+            break
+        except urllib.error.HTTPError as error:
+            if error.code != 422:
+                raise
+            error.close()
+            if attempt == PUBLISH_MAX_ATTEMPTS:
+                raise ValueError("publish rejected after retries; leaving release as draft") from error
+            status = request(base + f"/releases/{release['id']}")
+            if not status["draft"]:
+                break
+            time.sleep(PUBLISH_RETRY_SECONDS * attempt)
 
 
 if __name__ == "__main__":

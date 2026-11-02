@@ -238,6 +238,54 @@ class ReleaseTests(unittest.TestCase):
     def test_tag_deleted_during_upload_leaves_draft(self):
         self.check_upload_tag_change(deleted=True)
 
+    def test_publish_retries_transient_422(self):
+        import io
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            names = sorted(metadata.asset(x, metadata.version()) for x in metadata.TARGETS)
+            for name in names:
+                (directory / name).write_bytes(b'package')
+            patch_attempts = 0
+
+            class Response:
+                def __init__(self, data):
+                    self.data = data
+                def __enter__(self):
+                    return io.StringIO(json.dumps(self.data))
+                def __exit__(self, *args):
+                    pass
+
+            def fake(request, timeout):
+                nonlocal patch_attempts
+                url = request.full_url
+                method = request.get_method()
+                if '/git/ref/' in url:
+                    return Response({'object': {'type': 'commit', 'sha': 'a' * 40}})
+                if '/releases?per_page=' in url:
+                    return Response([])
+                if '/releases/tags/' in url:
+                    raise urllib.error.HTTPError(url, 404, 'Not Found', {}, io.BytesIO(b''))
+                if url.endswith('/releases') and method == 'POST':
+                    return Response({'id': 1, 'upload_url': 'https://uploads.github.com/repos/owner/repo/releases/1/assets{?name,label}'})
+                if 'uploads.github.com' in url:
+                    return Response({'state': 'uploaded', 'size': len(request.data)})
+                if '/assets?' in url:
+                    return Response([{'name': n} for n in names + ['SHA256SUMS']])
+                if url.endswith('/releases/1') and method == 'GET':
+                    return Response({'id': 1, 'draft': True})
+                if url.endswith('/releases/1') and method == 'PATCH':
+                    patch_attempts += 1
+                    if patch_attempts < 3:
+                        raise urllib.error.HTTPError(url, 422, 'Unprocessable Entity', {}, io.BytesIO(b''))
+                    return Response({'id': 1})
+                raise AssertionError((method, url))
+
+            env = dict(GITHUB_REF_NAME='v' + metadata.version(), GITHUB_EVENT_NAME='push', GITHUB_REF='refs/tags/v' + metadata.version(), GITHUB_REPOSITORY='owner/repo', GITHUB_SHA='a' * 40, GH_TOKEN='fake')
+            with patch.dict(os.environ, env), patch('urllib.request.urlopen', fake), patch('time.sleep') as sleep:
+                release.publish(directory)
+            self.assertEqual(patch_attempts, 3)
+            sleep.assert_has_calls([unittest.mock.call(3), unittest.mock.call(6)])
+
 
 class TagResolutionTests(unittest.TestCase):
     def test_lightweight_and_nested_annotated_tags(self):
