@@ -1,0 +1,11 @@
+<!DOCTYPE kpartgui>
+<kpartgui name="kmm_binance_price" version="1">
+  <MenuBar>
+    <Menu name="kmmtools">
+      <Separator/>
+      <Action name="binance_configure"/>
+      <Action name="binance_update"/>
+      <Action name="binance_status"/>
+    </Menu>
+  </MenuBar>
+</kpartgui>

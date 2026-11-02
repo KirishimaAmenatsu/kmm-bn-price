@@ -1,0 +1,12 @@
+{
+  "KPlugin": {
+    "Id": "kmm_binance_price",
+    "Name": "Binance Securities Prices",
+    "Name[zh_CN]": "币安证券报价",
+    "Description": "Binance spot securities prices with ECB fiat reference rates",
+    "Version": "0.1.0",
+    "License": "GPL-2.0+",
+    "Icon": "view-financial-list",
+    "EnabledByDefault": false
+  }
+}
