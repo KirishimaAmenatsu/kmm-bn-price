@@ -267,7 +267,7 @@ class ReleaseTests(unittest.TestCase):
                     raise urllib.error.HTTPError(url, 404, 'Not Found', {}, io.BytesIO(b''))
                 if url.endswith('/releases') and method == 'POST':
                     return Response({'id': 1, 'upload_url': 'https://uploads.github.com/repos/owner/repo/releases/1/assets{?name,label}'})
-                if 'uploads.github.com' in url:
+                if url.startswith('https://uploads.github.com/repos/owner/repo/releases/1/assets?name='):
                     return Response({'state': 'uploaded', 'size': len(request.data)})
                 if '/assets?' in url:
                     return Response([{'name': n} for n in names + ['SHA256SUMS']])
